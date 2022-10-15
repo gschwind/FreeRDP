@@ -101,7 +101,7 @@ static UwacReturnCode set_cursor_image(UwacSeat* seat, uint32_t serial)
 
 	switch (seat->pointer_type)
 	{
-		case 2: /* Custom poiner */
+		case 2: /* Custom pointer */
 			image = seat->pointer_image;
 			buffer = create_pointer_buffer(seat, seat->pointer_data, seat->pointer_size);
 			if (!buffer)
