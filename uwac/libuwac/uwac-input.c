@@ -788,6 +788,9 @@ static void pointer_handle_motion(void* data, struct wl_pointer* pointer, uint32
 	input->sx = sx_d;
 	input->sy = sy_d;
 
+	window->buffers[window->drawingBufferIdx].dirty = true;
+	UwacWindowSubmitBuffer(window, true);
+
 	motion_event =
 	    (UwacPointerMotionEvent*)UwacDisplayNewEvent(input->display, UWAC_EVENT_POINTER_MOTION);
 	if (!motion_event)
