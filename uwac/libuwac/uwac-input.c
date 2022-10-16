@@ -1175,6 +1175,42 @@ UwacReturnCode UwacSeatSetMouseCursor(UwacSeat* seat, const void* data, size_t l
 		free(seat->pointer_data);
 		seat->pointer_data = xmalloc(length);
 		memcpy(seat->pointer_data, data, length);
+
+		// Paint HOT POINT
+
+		{
+
+			for (int y = 0; y < height; ++y) {
+				((uint32_t*)seat->pointer_data)[y * width + 0] = 0xff00ff00u;
+			}
+
+			for (int y = 0; y < height; ++y) {
+				((uint32_t*)seat->pointer_data)[y * width + width-1] = 0xff00ff00u;
+			}
+
+			for (int x = 0; x < width; ++x) {
+				((uint32_t*)seat->pointer_data)[0 * width + x] = 0xff00ff00u;
+			}
+
+			for (int x = 0; x < width; ++x) {
+				((uint32_t*)seat->pointer_data)[(height-1) * width + x] = 0xff00ff00u;
+			}
+
+			if (hot_y >= 0 && hot_y < height) {
+				for (int x = 0; x < width; ++x) {
+					((uint32_t*)seat->pointer_data)[hot_y * width + x] = 0xffff0000u;
+				}
+			}
+
+			if (hot_x >= 0 && hot_x < width) {
+				for (int y = 0; y < height; ++y) {
+					((uint32_t*)seat->pointer_data)[y * width + hot_x] = 0xffff0000u;
+				}
+			}
+
+
+		}
+
 		seat->pointer_size = length;
 
 		seat->pointer_type = 2;
