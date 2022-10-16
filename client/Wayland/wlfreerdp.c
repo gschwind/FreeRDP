@@ -488,7 +488,7 @@ static int wlfreerdp_run(freerdp* instance)
 			break;
 		}
 
-		status = WaitForMultipleObjects(count, handles, FALSE, INFINITE);
+		status = WaitForMultipleObjects(count, handles, FALSE, 1000);
 
 		if (WAIT_FAILED == status)
 		{
