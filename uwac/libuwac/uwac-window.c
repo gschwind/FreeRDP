@@ -682,14 +682,38 @@ static void damage_surface(UwacWindow* window, UwacBuffer* buffer)
 
 static void UwacSubmitBufferPtr(UwacWindow* window, UwacBuffer* buffer)
 {
-	wl_surface_attach(window->surface, buffer->wayland_buffer, 0, 0);
+	SSIZE_T id;
+	UwacBuffer* nextBuffer = UwacWindowFindFreeBuffer(window, &id);
 
-	damage_surface(window, buffer);
+	memcpy(nextBuffer->data, buffer->data,
+	       window->stride * window->height * 1ULL);
+
+	{
+		UwacSeat *seat, *tmp;
+		wl_list_for_each_safe(seat, tmp, &window->display->seats, link)
+		{
+			for (int x = 0; x < window->width; ++x) {
+				((uint32_t*)nextBuffer->data)[((int)seat->sy) * window->width + x] = 0xff0000ff;
+			}
+
+			for (int y = 0; y < window->height; ++y) {
+				((uint32_t*)nextBuffer->data)[y * window->width + ((int)seat->sx)] = 0xff0000ff;
+			}
+
+		}
+	}
+
+	wl_surface_attach(window->surface, nextBuffer->wayland_buffer, 0, 0);
+
+	damage_surface(window, nextBuffer);
+
+	wl_surface_damage(window->surface, 0, 0, window->width, window->height);
 
 	struct wl_callback* frame_callback = wl_surface_frame(window->surface);
 	wl_callback_add_listener(frame_callback, &frame_listener, window);
 	wl_surface_commit(window->surface);
 	buffer->dirty = false;
+	nextBuffer->dirty = false;
 }
 
 static void frame_done_cb(void* data, struct wl_callback* callback, uint32_t time)
@@ -698,6 +722,7 @@ static void frame_done_cb(void* data, struct wl_callback* callback, uint32_t tim
 	UwacFrameDoneEvent* event;
 
 	wl_callback_destroy(callback);
+	window->buffers[window->pendingBufferIdx].used = false;
 	window->pendingBufferIdx = -1;
 	event = (UwacFrameDoneEvent*)UwacDisplayNewEvent(window->display, UWAC_EVENT_FRAME_DONE);
 
