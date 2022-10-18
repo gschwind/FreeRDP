@@ -69,7 +69,7 @@ static struct wl_buffer* create_pointer_buffer(UwacSeat* seat, const void* src, 
 
 	buffer =
 	    wl_shm_pool_create_buffer(pool, 0, seat->pointer_image->width, seat->pointer_image->height,
-	                              seat->pointer_image->width * 4, WL_SHM_FORMAT_ARGB8888);
+	                              seat->pointer_image->width * 4, WL_SHM_FORMAT_XRGB8888);
 	wl_shm_pool_destroy(pool);
 
 	if (munmap(data, size) < 0)
