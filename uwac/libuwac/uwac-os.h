@@ -42,4 +42,7 @@ ssize_t uwac_os_recvmsg_cloexec(int sockfd, struct msghdr* msg, int flags);
 int uwac_os_epoll_create_cloexec(void);
 
 int uwac_create_anonymous_file(off_t size);
+
+int uwac_resize_file(int fd, size_t size);
+
 #endif /* UWAC_OS_H */

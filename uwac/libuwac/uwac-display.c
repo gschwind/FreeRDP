@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #include <sys/epoll.h>
 
 #include "uwac-os.h"
@@ -119,6 +120,240 @@ static void display_destroy_seat(UwacDisplay* d, uint32_t name)
 	}
 }
 
+UwacShmPoolExtend * UwacShmPoolExtendCreate(size_t offset, size_t size)
+{
+	UwacShmPoolExtend * e = xmalloc(sizeof(UwacShmPoolExtend));
+	e->next = NULL;
+	e->offset = offset;
+	e->size = size;
+	return e;
+}
+
+void UwacShmPoolDestroy(UwacShmPoolExtend * e)
+{
+	free(e);
+}
+
+static void UwacShmPoolInsertExtend(UwacShmPool *p, size_t offset, size_t size);
+
+UwacShmPool * UwacShmPoolCreate(struct wl_shm * shm)
+{
+	UwacShmPool * p = xmalloc(sizeof(UwacShmPool));
+
+	p->unalocated = NULL;
+	p->pagesize = sysconf(_SC_PAGESIZE);
+
+	// Allocate one page, because we cannot allocate 0
+	p-> fd = uwac_create_anonymous_file(p->pagesize);
+	p->size = p->pagesize;
+
+	p->addr = mmap(NULL, p->size, PROT_READ | PROT_WRITE, MAP_SHARED, p->fd, 0);
+
+	// TODO: Check for error
+
+	p->wayland_shm_pool = wl_shm_create_pool(shm, p->fd, p->size);
+
+	// TODO: Check for error
+
+	// Add the allocated extend to free extend
+	UwacShmPoolInsertExtend(p, 0, p->size);
+
+	printf("Pool %p\n", p);
+	return p;
+}
+
+static void UwacShmPoolInsertExtend(UwacShmPool *p, size_t offset, size_t size)
+{
+	// find first extend after e
+	UwacShmPoolExtend ** i = &p->unalocated;
+	while(*i != NULL) {
+		if ((*i)->offset > offset)
+			break;
+		i = &((*i)->next);
+	}
+
+	// Try to merge previous with the next one
+	// If i is not the pool
+	if (i != &p->unalocated) {
+		UwacShmPoolExtend * x = wl_container_of(i, x, next);
+		if (x->offset+x->size == offset) {
+			printf("merge extend %d %d with %d %d\n", x->offset, x->size, offset, size);
+			x->size += size;
+			printf("new extend %d %d\n", x->offset, x->size);
+
+			// Try to merge the following
+			if (x->next) {
+				if (x->offset+x->size == x->next->offset) {
+					UwacShmPoolExtend * to_free = x->next;
+					x->size =+ x->next->size;
+					x->next = x->next->next;
+					free(to_free);
+				}
+			}
+		} else if (x->next) {
+			// Try to merge with the following
+			if (offset+size == x->next->offset) {
+				x->next->offset = offset;
+				x->next->size += size;
+			} else {
+				// fail to merge
+				UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+				e->next = *i;
+				*i = e;
+			}
+		} else {
+			// fail to merge
+			UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+			e->next = *i;
+			*i = e;
+		}
+	} else if (*i != NULL) {
+		if (offset+size == (*i)->offset) {
+			(*i)->offset = offset;
+			(*i)->size += size;
+		} else {
+			// fail to merge
+			UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+			e->next = *i;
+			*i = e;
+		}
+	} else {
+		// fail to merge
+		UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+		e->next = *i;
+		*i = e;
+	}
+
+}
+
+// find a good offset for the requested size and reserve it.
+static size_t UwacShmPoolAlloc(UwacShmPool *p, size_t size)
+{
+	// find first extend after e
+	UwacShmPoolExtend ** i = &p->unalocated;
+	while(*i != NULL) {
+		if ((*i)->size >= size)
+			break;
+		i = &((*i)->next);
+	}
+
+	// Fail to find suitable value
+	if (*i == NULL)
+		return (size_t)(-1); // TODO: failled value.
+
+	// Remove the extend.
+	if ((*i)->size == size) {
+		UwacShmPoolExtend * to_free = *i;
+		(*i) = to_free->next;
+		size_t off = to_free->offset;
+		free(to_free);
+		return off;
+	} else {
+		size_t off = (*i)->offset;
+		(*i)->offset += size;
+		(*i)->size -= size;
+		return off;
+	}
+
+}
+
+size_t UwacShmPoolIncreaseReserve(UwacShmPool *p, size_t size);
+
+void UwacShmPoolPrintExtends(UwacShmPool *p);
+
+static void xbuffer_release(void* data, struct wl_buffer* buffer)
+{
+	UwacBuffer * b = data;
+
+
+	UwacShmPoolDestroyBuffer(b->pool, b);
+
+}
+
+static const struct wl_buffer_listener xbuffer_listener = { xbuffer_release };
+
+
+UwacBuffer * UwacShmPoolCreateBuffer(UwacShmPool *p, int32_t width, int32_t height, int32_t stride, int32_t format)
+{
+	UwacShmPoolPrintExtends(p);
+
+	size_t off = UwacShmPoolAlloc(p, height*stride);
+
+	// fail to allocate
+	if (off == (size_t)(-1)) {
+		off = UwacShmPoolIncreaseReserve(p, height*stride);
+	}
+
+	UwacShmPoolPrintExtends(p);
+
+	printf("UwacShmPoolCreateBuffer @ %d + %d\n", off, height*stride);
+
+	UwacBuffer * b = xzalloc(sizeof(UwacBuffer));
+
+	region16_init(&b->damage);
+
+	b->dirty = true;
+	b->offset = off;
+	b->size = height*stride;
+	b->pool = p;
+
+	printf("XXPool %p\n", p);
+
+	b->wayland_buffer = wl_shm_pool_create_buffer(p->wayland_shm_pool, off, width, height, stride, format);
+	wl_buffer_add_listener(b->wayland_buffer, &xbuffer_listener, b);
+
+	return b;
+
+}
+
+void UwacShmPoolDestroyBuffer(UwacShmPool *p, UwacBuffer * b)
+{
+	printf("destroy buffer %p %p\n", p, b);
+	UwacShmPoolInsertExtend(p, b->offset, b->size);
+	wl_buffer_destroy(b->wayland_buffer);
+	free(b);
+}
+
+size_t UwacShmPoolIncreaseReserve(UwacShmPool *p, size_t size)
+{
+	size_t new_size = p->size + (size/p->pagesize+1)*p->pagesize;
+
+	printf("UwacShmPoolIncreaseReserve %d %d\n", p->size, new_size);
+
+	munmap(p->addr, p->size);
+
+	uwac_resize_file(p->fd, new_size);
+
+	p->addr = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, p->fd, 0);
+
+	UwacShmPoolInsertExtend(p, p->size, new_size-p->size);
+
+	wl_shm_pool_resize(p->wayland_shm_pool, new_size);
+
+	p->size = new_size;
+
+	// Should not fail
+	return UwacShmPoolAlloc(p, size);
+
+}
+
+void * UwacBufferGetData(UwacBuffer * b)
+{
+	return b->pool->addr + b->offset;
+}
+
+void UwacShmPoolPrintExtends(UwacShmPool *p)
+{
+	printf("extends :");
+
+	UwacShmPoolExtend * i = p->unalocated;
+	while(i != NULL) {
+		printf("[%d, %d],", i->offset, i->offset+i->size);
+		i = i->next;
+	}
+	printf("\n");
+}
+
 static void UwacSeatRegisterDDM(UwacSeat* seat)
 {
 	UwacDisplay* d = seat->display;
@@ -159,6 +394,10 @@ static void registry_handle_global(void* data, struct wl_registry* registry, uin
 		d->shm =
 		    wl_registry_bind(registry, id, &wl_shm_interface, min(TARGET_SHM_INTERFACE, version));
 		wl_shm_add_listener(d->shm, &shm_listener, d);
+
+		printf("XXXXX SHM\n");
+		d->shm_pool = UwacShmPoolCreate(d->shm);
+
 	}
 	else if (strcmp(interface, "wl_output") == 0)
 	{

@@ -51,6 +51,31 @@
 
 extern UwacErrorHandler uwacErrorHandler;
 
+/** @brief store a free extend. */
+struct uwac_shm_pool_extend
+{
+	struct uwac_shm_pool_extend * next;
+	size_t offset;
+	size_t size;
+};
+typedef struct uwac_shm_pool_extend UwacShmPoolExtend;
+
+/** @brief structure that manage a shm_pool, grow on needed */
+struct uwac_shm_pool
+{
+	int fd; //< store the file handler
+	size_t size; //< store file allocated size
+
+	size_t pagesize; //> cache the system page size
+
+	uint8_t * addr; //< store the addresse of the mapped file.
+	struct wl_shm_pool * wayland_shm_pool;
+	UwacShmPoolExtend * unalocated; //< sorted list of unallocated data, from lower offset to higher
+};
+typedef struct uwac_shm_pool UwacShmPool;
+
+
+
 typedef struct uwac_task UwacTask;
 
 /** @brief */
@@ -107,6 +132,7 @@ struct uwac_display
 	enum wl_shm_format* shm_formats;
 	uint32_t shm_formats_nb;
 	bool has_rgb565;
+	struct uwac_shm_pool * shm_pool;
 
 	struct wl_data_device_manager* data_device_manager;
 	struct text_cursor_position* text_cursor_position;
@@ -211,7 +237,7 @@ struct uwac_seat
 /** @brief a buffer used for drawing a surface frame */
 struct uwac_buffer
 {
-	bool used;
+	struct uwac_shm_pool * pool;
 	bool dirty;
 #ifdef HAVE_PIXMAN_REGION
 	pixman_region32_t damage;
@@ -219,7 +245,7 @@ struct uwac_buffer
 	REGION16 damage;
 #endif
 	struct wl_buffer* wayland_buffer;
-	void* data;
+	size_t offset;
 	size_t size;
 };
 typedef struct uwac_buffer UwacBuffer;
@@ -232,13 +258,10 @@ struct uwac_window
 	int surfaceStates;
 	enum wl_shm_format format;
 
-	int nbuffers;
-	UwacBuffer* buffers;
-
 	struct wl_region* opaque_region;
 	struct wl_region* input_region;
-	ssize_t drawingBufferIdx;
-	ssize_t pendingBufferIdx;
+	UwacBuffer * drawingBuffer;
+	UwacBuffer * pendingBuffer;
 	struct wl_surface* surface;
 	struct wl_shell_surface* shell_surface;
 	struct xdg_surface* xdg_surface;
@@ -276,5 +299,9 @@ UwacOutput* UwacCreateOutput(UwacDisplay* d, uint32_t id, uint32_t version);
 int UwacDestroyOutput(UwacOutput* output);
 
 UwacReturnCode UwacSeatRegisterClipboard(UwacSeat* s);
+
+UwacBuffer * UwacShmPoolCreateBuffer(UwacShmPool *p, int32_t width, int32_t height, int32_t stride, int32_t format);
+void UwacShmPoolDestroyBuffer(UwacShmPool *p, UwacBuffer * b);
+void * UwacBufferGetData(UwacBuffer * b);
 
 #endif /* UWAC_PRIV_H_ */

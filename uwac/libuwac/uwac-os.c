@@ -267,6 +267,13 @@ int uwac_create_anonymous_file(off_t size)
 	if (fd < 0)
 		return -1;
 
+	return uwac_resize_file(fd, size);
+}
+
+
+int uwac_resize_file(int fd, size_t size)
+{
+	int ret;
 #ifdef HAVE_POSIX_FALLOCATE
 	ret = posix_fallocate(fd, 0, size);
 

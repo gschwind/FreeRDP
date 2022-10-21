@@ -47,42 +47,6 @@ static int bppFromShmFormat(enum wl_shm_format format)
 	}
 }
 
-static void buffer_release(void* data, struct wl_buffer* buffer)
-{
-	UwacBufferReleaseData* releaseData = data;
-	UwacBuffer* uwacBuffer = &releaseData->window->buffers[releaseData->bufferIdx];
-	uwacBuffer->used = false;
-}
-
-static const struct wl_buffer_listener buffer_listener = { buffer_release };
-
-static void UwacWindowDestroyBuffers(UwacWindow* w)
-{
-	int i;
-
-	for (i = 0; i < w->nbuffers; i++)
-	{
-		UwacBuffer* buffer = &w->buffers[i];
-#ifdef HAVE_PIXMAN_REGION
-		pixman_region32_fini(&buffer->damage);
-#else
-		region16_uninit(&buffer->damage);
-#endif
-		UwacBufferReleaseData* releaseData =
-		    (UwacBufferReleaseData*)wl_buffer_get_user_data(buffer->wayland_buffer);
-		wl_buffer_destroy(buffer->wayland_buffer);
-		free(releaseData);
-		munmap(buffer->data, buffer->size);
-	}
-
-	w->nbuffers = 0;
-	free(w->buffers);
-	w->buffers = NULL;
-}
-
-static int UwacWindowShmAllocBuffers(UwacWindow* w, int nbuffers, int allocSize, uint32_t width,
-                                     uint32_t height, enum wl_shm_format format);
-
 static void xdg_handle_toplevel_configure(void* data, struct xdg_toplevel* xdg_toplevel,
                                           int32_t width, int32_t height, struct wl_array* states)
 {
@@ -130,26 +94,23 @@ static void xdg_handle_toplevel_configure(void* data, struct xdg_toplevel* xdg_t
 
 	if ((width > 0 && height > 0) && (width != window->width || height != window->height))
 	{
+
+		if (window->drawingBuffer)
+			UwacShmPoolDestroyBuffer(window->display->shm_pool, window->drawingBuffer);
+
 		event->width = width;
 		event->height = height;
-		UwacWindowDestroyBuffers(window);
 		window->width = width;
 		window->stride = width * bppFromShmFormat(window->format);
 		window->height = height;
-		ret = UwacWindowShmAllocBuffers(window, UWAC_INITIAL_BUFFERS, window->stride * height,
-		                                width, height, window->format);
 
-		if (ret != UWAC_SUCCESS)
-		{
-			assert(
-			    uwacErrorHandler(window->display, ret, "failed to reallocate a wayland buffers\n"));
-			window->drawingBufferIdx = window->pendingBufferIdx = -1;
-			return;
+		window->drawingBuffer = UwacShmPoolCreateBuffer(window->display->shm_pool, window->width, window->height, window->stride, window->format);
+
+		if (window->pendingBuffer) {
+			UwacShmPoolDestroyBuffer(window->display->shm_pool, window->pendingBuffer);
+			window->pendingBuffer = NULL;
 		}
 
-		window->drawingBufferIdx = 0;
-		if (window->pendingBufferIdx != -1)
-			window->pendingBufferIdx = window->drawingBufferIdx;
 	}
 	else
 	{
@@ -211,26 +172,21 @@ static void ivi_handle_configure(void* data, struct ivi_surface* surface, int32_
 
 	if (width && height)
 	{
+		if (window->drawingBuffer)
+			UwacShmPoolDestroyBuffer(window->display->shm_pool, window->drawingBuffer);
+
 		event->width = width;
 		event->height = height;
-		UwacWindowDestroyBuffers(window);
 		window->width = width;
 		window->stride = width * bppFromShmFormat(window->format);
 		window->height = height;
-		ret = UwacWindowShmAllocBuffers(window, UWAC_INITIAL_BUFFERS, window->stride * height,
-		                                width, height, window->format);
 
-		if (ret != UWAC_SUCCESS)
-		{
-			assert(
-			    uwacErrorHandler(window->display, ret, "failed to reallocate a wayland buffers\n"));
-			window->drawingBufferIdx = window->pendingBufferIdx = -1;
-			return;
+		window->drawingBuffer = UwacShmPoolCreateBuffer(window->display->shm_pool, window->width, window->height, window->stride, window->format);
+
+		if (window->pendingBuffer) {
+			UwacShmPoolDestroyBuffer(window->display->shm_pool, window->pendingBuffer);
+			window->pendingBuffer = NULL;
 		}
-
-		window->drawingBufferIdx = 0;
-		if (window->pendingBufferIdx != -1)
-			window->pendingBufferIdx = window->drawingBufferIdx;
 	}
 	else
 	{
@@ -269,26 +225,21 @@ static void shell_configure(void* data, struct wl_shell_surface* surface, uint32
 
 	if (width && height)
 	{
+		if (window->drawingBuffer)
+			UwacShmPoolDestroyBuffer(window->display->shm_pool, window->drawingBuffer);
+
 		event->width = width;
 		event->height = height;
-		UwacWindowDestroyBuffers(window);
 		window->width = width;
 		window->stride = width * bppFromShmFormat(window->format);
 		window->height = height;
-		ret = UwacWindowShmAllocBuffers(window, UWAC_INITIAL_BUFFERS, window->stride * height,
-		                                width, height, window->format);
 
-		if (ret != UWAC_SUCCESS)
-		{
-			assert(
-			    uwacErrorHandler(window->display, ret, "failed to reallocate a wayland buffers\n"));
-			window->drawingBufferIdx = window->pendingBufferIdx = -1;
-			return;
+		window->drawingBuffer = UwacShmPoolCreateBuffer(window->display->shm_pool, window->width, window->height, window->stride, window->format);
+
+		if (window->pendingBuffer) {
+			UwacShmPoolDestroyBuffer(window->display->shm_pool, window->pendingBuffer);
+			window->pendingBuffer = NULL;
 		}
-
-		window->drawingBufferIdx = 0;
-		if (window->pendingBufferIdx != -1)
-			window->pendingBufferIdx = window->drawingBufferIdx;
 	}
 	else
 	{
@@ -303,108 +254,6 @@ static void shell_popup_done(void* data, struct wl_shell_surface* surface)
 
 static const struct wl_shell_surface_listener shell_listener = { shell_ping, shell_configure,
 	                                                             shell_popup_done };
-
-int UwacWindowShmAllocBuffers(UwacWindow* w, int nbuffers, int allocSize, uint32_t width,
-                              uint32_t height, enum wl_shm_format format)
-{
-	int ret = UWAC_SUCCESS;
-	UwacBuffer* newBuffers;
-	int i, fd;
-	void* data;
-	struct wl_shm_pool* pool;
-	size_t pagesize = sysconf(_SC_PAGESIZE);
-	newBuffers = xrealloc(w->buffers, (w->nbuffers + nbuffers) * sizeof(UwacBuffer));
-
-	if (!newBuffers)
-		return UWAC_ERROR_NOMEMORY;
-
-	/* round up to a multiple of PAGESIZE to page align data for each buffer */
-	allocSize = (allocSize + pagesize - 1) & ~(pagesize - 1);
-
-	w->buffers = newBuffers;
-	memset(w->buffers + w->nbuffers, 0, sizeof(UwacBuffer) * nbuffers);
-	fd = uwac_create_anonymous_file(allocSize * nbuffers * 1ULL);
-
-	if (fd < 0)
-	{
-		return UWAC_ERROR_INTERNAL;
-	}
-
-	data = mmap(NULL, allocSize * nbuffers * 1ULL, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-
-	if (data == MAP_FAILED)
-	{
-		ret = UWAC_ERROR_NOMEMORY;
-		goto error_mmap;
-	}
-
-	pool = wl_shm_create_pool(w->display->shm, fd, allocSize * nbuffers);
-
-	if (!pool)
-	{
-		munmap(data, allocSize * nbuffers * 1ULL);
-		ret = UWAC_ERROR_NOMEMORY;
-		goto error_mmap;
-	}
-
-	for (i = 0; i < nbuffers; i++)
-	{
-		int bufferIdx = w->nbuffers + i;
-		UwacBuffer* buffer = &w->buffers[bufferIdx];
-#ifdef HAVE_PIXMAN_REGION
-		pixman_region32_init(&buffer->damage);
-#else
-		region16_init(&buffer->damage);
-#endif
-		buffer->data = data + (allocSize * i);
-		buffer->size = allocSize;
-		buffer->wayland_buffer =
-		    wl_shm_pool_create_buffer(pool, allocSize * i, width, height, w->stride, format);
-		UwacBufferReleaseData* listener_data = xmalloc(sizeof(UwacBufferReleaseData));
-		listener_data->window = w;
-		listener_data->bufferIdx = bufferIdx;
-		wl_buffer_add_listener(buffer->wayland_buffer, &buffer_listener, listener_data);
-	}
-
-	wl_shm_pool_destroy(pool);
-	w->nbuffers += nbuffers;
-error_mmap:
-	close(fd);
-	return ret;
-}
-
-static UwacBuffer* UwacWindowFindFreeBuffer(UwacWindow* w, ssize_t* index)
-{
-	ssize_t i;
-	int ret;
-
-	if (index)
-		*index = -1;
-
-	for (i = 0; i < w->nbuffers; i++)
-	{
-		if (!w->buffers[i].used)
-		{
-			w->buffers[i].used = true;
-			if (index)
-				*index = i;
-			return &w->buffers[i];
-		}
-	}
-
-	ret = UwacWindowShmAllocBuffers(w, 2, w->stride * w->height, w->width, w->height, w->format);
-
-	if (ret != UWAC_SUCCESS)
-	{
-		w->display->last_error = ret;
-		return NULL;
-	}
-
-	w->buffers[i].used = true;
-	if (index)
-		*index = i;
-	return &w->buffers[i];
-}
 
 static UwacReturnCode UwacWindowSetDecorations(UwacWindow* w)
 {
@@ -465,17 +314,9 @@ UwacWindow* UwacCreateWindowShm(UwacDisplay* display, uint32_t width, uint32_t h
 	w->height = height;
 	w->stride = width * bppFromShmFormat(format);
 	allocSize = w->stride * height;
-	ret = UwacWindowShmAllocBuffers(w, UWAC_INITIAL_BUFFERS, allocSize, width, height, format);
 
-	if (ret != UWAC_SUCCESS)
-	{
-		display->last_error = ret;
-		goto out_error_free;
-	}
-
-	w->buffers[0].used = true;
-	w->drawingBufferIdx = 0;
-	w->pendingBufferIdx = -1;
+	w->drawingBuffer = UwacShmPoolCreateBuffer(display->shm_pool, w->width, w->height, w->stride, w->format);
+	w->pendingBuffer = NULL;
 	w->surface = wl_compositor_create_surface(display->compositor);
 
 	if (!w->surface)
@@ -558,7 +399,7 @@ UwacWindow* UwacCreateWindowShm(UwacDisplay* display, uint32_t width, uint32_t h
 out_error_shell:
 	wl_surface_destroy(w->surface);
 out_error_surface:
-	UwacWindowDestroyBuffers(w);
+	// TODO: UwacWindowDestroyBuffers(w);
 out_error_free:
 	free(w);
 	return NULL;
@@ -569,7 +410,7 @@ UwacReturnCode UwacDestroyWindow(UwacWindow** pwindow)
 	UwacWindow* w;
 	assert(pwindow);
 	w = *pwindow;
-	UwacWindowDestroyBuffers(w);
+	// TODO: UwacWindowDestroyBuffers(w);
 
 	if (w->deco)
 		zxdg_toplevel_decoration_v1_destroy(w->deco);
@@ -638,16 +479,10 @@ UwacReturnCode UwacWindowSetInputRegion(UwacWindow* window, uint32_t x, uint32_t
 
 void* UwacWindowGetDrawingBuffer(UwacWindow* window)
 {
-	UwacBuffer* buffer;
-
-	if (window->drawingBufferIdx < 0)
+	if (!window->drawingBuffer)
 		return NULL;
 
-	buffer = &window->buffers[window->drawingBufferIdx];
-	if (!buffer)
-		return NULL;
-
-	return buffer->data;
+	return UwacBufferGetData(window->drawingBuffer);
 }
 
 static void frame_done_cb(void* data, struct wl_callback* callback, uint32_t time);
@@ -698,7 +533,7 @@ static void frame_done_cb(void* data, struct wl_callback* callback, uint32_t tim
 	UwacFrameDoneEvent* event;
 
 	wl_callback_destroy(callback);
-	window->pendingBufferIdx = -1;
+	window->pendingBuffer = NULL;
 	event = (UwacFrameDoneEvent*)UwacDisplayNewEvent(window->display, UWAC_EVENT_FRAME_DONE);
 
 	if (event)
@@ -733,10 +568,10 @@ UwacReturnCode UwacWindowAddDamage(UwacWindow* window, uint32_t x, uint32_t y, u
 	box.right = x + width;
 	box.bottom = y + height;
 
-	if (window->drawingBufferIdx < 0)
+	if (!window->drawingBuffer)
 		return UWAC_ERROR_INTERNAL;
 
-	buf = &window->buffers[window->drawingBufferIdx];
+	buf = window->drawingBuffer;
 	if (!buf)
 		return UWAC_ERROR_INTERNAL;
 
@@ -751,7 +586,7 @@ UwacReturnCode UwacWindowAddDamage(UwacWindow* window, uint32_t x, uint32_t y, u
 UwacReturnCode UwacWindowGetDrawingBufferGeometry(UwacWindow* window, UwacSize* geometry,
                                                   size_t* stride)
 {
-	if (!window || (window->drawingBufferIdx < 0))
+	if (!window || (!window->drawingBuffer))
 		return UWAC_ERROR_INTERNAL;
 
 	if (geometry)
@@ -768,30 +603,23 @@ UwacReturnCode UwacWindowGetDrawingBufferGeometry(UwacWindow* window, UwacSize* 
 
 UwacReturnCode UwacWindowSubmitBuffer(UwacWindow* window, bool copyContentForNextFrame)
 {
-	UwacBuffer* currentDrawingBuffer;
-	UwacBuffer* nextDrawingBuffer;
-	UwacBuffer* pendingBuffer;
-
-	if (window->drawingBufferIdx < 0)
+	if (!window->drawingBuffer)
 		return UWAC_ERROR_INTERNAL;
 
-	currentDrawingBuffer = &window->buffers[window->drawingBufferIdx];
-
-	if ((window->pendingBufferIdx >= 0) || !currentDrawingBuffer->dirty)
+	if ((window->pendingBuffer) || !window->drawingBuffer->dirty)
 		return UWAC_SUCCESS;
 
-	window->pendingBufferIdx = window->drawingBufferIdx;
-	nextDrawingBuffer = UwacWindowFindFreeBuffer(window, &window->drawingBufferIdx);
-	pendingBuffer = &window->buffers[window->pendingBufferIdx];
+	window->pendingBuffer = window->drawingBuffer;
+	window->drawingBuffer = UwacShmPoolCreateBuffer(window->display->shm_pool, window->width, window->height, window->stride, window->format);
 
-	if ((!nextDrawingBuffer) || (window->drawingBufferIdx < 0))
+	if (!window->drawingBuffer)
 		return UWAC_ERROR_NOMEMORY;
 
 	if (copyContentForNextFrame)
-		memcpy(nextDrawingBuffer->data, pendingBuffer->data,
+		memcpy(UwacBufferGetData(window->drawingBuffer), UwacBufferGetData(window->pendingBuffer),
 		       window->stride * window->height * 1ULL);
 
-	UwacSubmitBufferPtr(window, pendingBuffer);
+	UwacSubmitBufferPtr(window, window->pendingBuffer);
 	return UWAC_SUCCESS;
 }
 
