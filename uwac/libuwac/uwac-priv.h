@@ -71,6 +71,7 @@ struct uwac_shm_pool
 	uint8_t * addr; //< store the addresse of the mapped file.
 	struct wl_shm_pool * wayland_shm_pool;
 	UwacShmPoolExtend * unalocated; //< sorted list of unallocated data, from lower offset to higher
+	struct uwac_buffer * free_buffer_struct; //< store free structure for fast allocation.
 };
 typedef struct uwac_shm_pool UwacShmPool;
 
@@ -238,6 +239,7 @@ struct uwac_seat
 struct uwac_buffer
 {
 	struct uwac_shm_pool * pool;
+	struct uwac_buffer * next; //< Used to create a pool of free struct
 	bool dirty;
 #ifdef HAVE_PIXMAN_REGION
 	pixman_region32_t damage;

@@ -141,6 +141,7 @@ UwacShmPool * UwacShmPoolCreate(struct wl_shm * shm)
 	UwacShmPool * p = xmalloc(sizeof(UwacShmPool));
 
 	p->unalocated = NULL;
+	p->free_buffer_struct = NULL;
 	p->pagesize = sysconf(_SC_PAGESIZE);
 
 	// Allocate one page, because we cannot allocate 0
@@ -288,7 +289,14 @@ UwacBuffer * UwacShmPoolCreateBuffer(UwacShmPool *p, int32_t width, int32_t heig
 
 	printf("UwacShmPoolCreateBuffer @ %d + %d\n", off, height*stride);
 
-	UwacBuffer * b = xzalloc(sizeof(UwacBuffer));
+	UwacBuffer * b;
+	if (p->free_buffer_struct) {
+		b = p->free_buffer_struct;
+		p->free_buffer_struct = b->next;
+		memset(b, 0, sizeof(UwacBuffer));
+	} else {
+		b = xzalloc(sizeof(UwacBuffer));
+	}
 
 	region16_init(&b->damage);
 
@@ -311,7 +319,9 @@ void UwacShmPoolDestroyBuffer(UwacShmPool *p, UwacBuffer * b)
 	printf("destroy buffer %p %p\n", p, b);
 	UwacShmPoolInsertExtend(p, b->offset, b->size);
 	wl_buffer_destroy(b->wayland_buffer);
-	free(b);
+	// Put back into free data;
+	b->next = p->free_buffer_struct;
+	p->free_buffer_struct = b;
 }
 
 size_t UwacShmPoolIncreaseReserve(UwacShmPool *p, size_t size)
