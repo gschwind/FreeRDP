@@ -41,44 +41,15 @@
 
 static struct wl_buffer* create_pointer_buffer(UwacSeat* seat, const void* src, size_t size)
 {
-	struct wl_buffer* buffer = NULL;
-	int fd;
-	void* data;
-	struct wl_shm_pool* pool;
+	UwacBuffer * buffer =  UwacShmPoolCreateBuffer(seat->display->shm_pool,
+					seat->pointer_image->width,
+					seat->pointer_image->height,
+					seat->pointer_image->width*4,
+					WL_SHM_FORMAT_ARGB8888);
 
-	fd = uwac_create_anonymous_file(size);
+	memcpy(UwacBufferGetData(buffer), src, size);
 
-	if (fd < 0)
-		return buffer;
-
-	data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-
-	if (data == MAP_FAILED)
-	{
-		goto error_mmap;
-	}
-	memcpy(data, src, size);
-
-	pool = wl_shm_create_pool(seat->display->shm, fd, size);
-
-	if (!pool)
-	{
-		munmap(data, size);
-		goto error_mmap;
-	}
-
-	buffer =
-	    wl_shm_pool_create_buffer(pool, 0, seat->pointer_image->width, seat->pointer_image->height,
-	                              seat->pointer_image->width * 4, WL_SHM_FORMAT_ARGB8888);
-	wl_shm_pool_destroy(pool);
-
-	if (munmap(data, size) < 0)
-		fprintf(stderr, "%s: munmap(%p, %zu) failed with [%d] %s\n", __func__, data, size, errno,
-		        strerror(errno));
-
-error_mmap:
-	close(fd);
-	return buffer;
+	return buffer->wayland_buffer;
 }
 
 static void on_buffer_release(void* data, struct wl_buffer* wl_buffer)
@@ -107,9 +78,6 @@ static UwacReturnCode set_cursor_image(UwacSeat* seat, uint32_t serial)
 			buffer = create_pointer_buffer(seat, seat->pointer_data, seat->pointer_size);
 			if (!buffer)
 				return UWAC_ERROR_INTERNAL;
-			if (wl_buffer_add_listener(buffer, &buffer_release_listener, seat) < 0)
-				return UWAC_ERROR_INTERNAL;
-
 			surface = seat->pointer_surface;
 			x = image->hotspot_x;
 			y = image->hotspot_y;
