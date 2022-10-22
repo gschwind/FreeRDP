@@ -173,83 +173,44 @@ static void UwacShmPoolInsertExtend(UwacShmPool *p, size_t offset, size_t size)
 		i = &((*i)->next);
 	}
 
-	// Try to merge previous with the next one
-	// If i is not the pool
+	bool merge_left = false;
+	bool merge_right = false;
+
+	// Check if we can merge at left
 	if (i != &p->unalocated) {
 		UwacShmPoolExtend * x = wl_container_of(i, x, next);
 		if (x->offset+x->size == offset) {
-			printf("merge extend %d %d with %d %d\n", x->offset, x->size, offset, size);
-			x->size += size;
-			printf("new extend %d %d\n", x->offset, x->size);
-
-			// Try to merge the following
-			if (x->next) {
-				if (x->offset+x->size == x->next->offset) {
-					UwacShmPoolExtend * to_free = x->next;
-					x->size =+ x->next->size;
-					x->next = x->next->next;
-
-					// Put in free list.
-					to_free->next = p->free_extend_struct;
-					p->free_extend_struct = to_free;
-				}
-			}
-		} else if (x->next) {
-			// Try to merge with the following
-			if (offset+size == x->next->offset) {
-				x->next->offset = offset;
-				x->next->size += size;
-			} else {
-				// fail to merge
-				UwacShmPoolExtend * e;
-				if (p->free_extend_struct) {
-					e = p->free_extend_struct;
-					p->free_extend_struct = e->next;
-					e->offset = offset;
-					e->next = NULL;
-					e->size = size;
-				} else {
-					e = UwacShmPoolExtendCreate(offset, size);
-				}
-				e->next = *i;
-				*i = e;
-			}
-		} else {
-			// fail to merge
-			UwacShmPoolExtend * e;
-			if (p->free_extend_struct) {
-				e = p->free_extend_struct;
-				p->free_extend_struct = e->next;
-				e->offset = offset;
-				e->next = NULL;
-				e->size = size;
-			} else {
-				e = UwacShmPoolExtendCreate(offset, size);
-			}
-			e->next = *i;
-			*i = e;
+			merge_left = true;
 		}
-	} else if (*i != NULL) {
+	}
+
+	// Check if we can merge at right
+	if ((*i)) {
 		if (offset+size == (*i)->offset) {
-			(*i)->offset = offset;
-			(*i)->size += size;
-		} else {
-			// fail to merge
-			UwacShmPoolExtend * e;
-			if (p->free_extend_struct) {
-				e = p->free_extend_struct;
-				p->free_extend_struct = e->next;
-				e->offset = offset;
-				e->next = NULL;
-				e->size = size;
-			} else {
-				e = UwacShmPoolExtendCreate(offset, size);
-			}
-			e->next = *i;
-			*i = e;
+			merge_right = true;
 		}
+	}
+
+	// Apply merge
+
+	if (merge_left && merge_right) {
+		UwacShmPoolExtend * x = wl_container_of(i, x, next);
+		x->size += size + x->next->size;
+		// Remove node from extend list
+		UwacShmPoolExtend * to_free = x->next;
+		x->next = to_free->next;
+		// Put back in free list
+		to_free->next = p->free_extend_struct;
+		p->free_extend_struct = to_free;
+	} else if (merge_left) {
+		UwacShmPoolExtend * x = wl_container_of(i, x, next);
+		x->size += size;
+	} else if (merge_right) {
+		UwacShmPoolExtend * x = (*i);
+		x->offset = offset;
+		x->size += size;
 	} else {
-		// fail to merge
+		// Create a new extend
 		UwacShmPoolExtend * e;
 		if (p->free_extend_struct) {
 			e = p->free_extend_struct;
@@ -263,7 +224,6 @@ static void UwacShmPoolInsertExtend(UwacShmPool *p, size_t offset, size_t size)
 		e->next = *i;
 		*i = e;
 	}
-
 }
 
 // find a good offset for the requested size and reserve it.
