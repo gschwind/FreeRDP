@@ -105,7 +105,7 @@ static BOOL wl_update_buffer(wlfContext* context_w, INT32 ix, INT32 iy, INT32 iw
 	if (UwacWindowAddDamage(context_w->window, x, y, w, h) != UWAC_SUCCESS)
 		goto fail;
 
-	if (UwacWindowSubmitBuffer(context_w->window, false) != UWAC_SUCCESS)
+	if (UwacWindowSubmitBuffer(context_w->window, true) != UWAC_SUCCESS)
 		goto fail;
 
 	res = TRUE;
@@ -324,7 +324,7 @@ static BOOL handle_uwac_events(freerdp* instance, UwacDisplay* display)
 			{
 				UwacReturnCode r;
 				EnterCriticalSection(&context->critical);
-				r = UwacWindowSubmitBuffer(context->window, false);
+				r = UwacWindowSubmitBuffer(context->window, true);
 				LeaveCriticalSection(&context->critical);
 				if (r != UWAC_SUCCESS)
 					return FALSE;
