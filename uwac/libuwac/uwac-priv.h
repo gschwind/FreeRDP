@@ -72,6 +72,7 @@ struct uwac_shm_pool
 	struct wl_shm_pool * wayland_shm_pool;
 	UwacShmPoolExtend * unalocated; //< sorted list of unallocated data, from lower offset to higher
 	struct uwac_buffer * free_buffer_struct; //< store free structure for fast allocation.
+	UwacShmPoolExtend * free_extend_struct; //< Store free extend save allocation time.
 };
 typedef struct uwac_shm_pool UwacShmPool;
 

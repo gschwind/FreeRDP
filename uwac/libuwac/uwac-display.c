@@ -188,7 +188,10 @@ static void UwacShmPoolInsertExtend(UwacShmPool *p, size_t offset, size_t size)
 					UwacShmPoolExtend * to_free = x->next;
 					x->size =+ x->next->size;
 					x->next = x->next->next;
-					free(to_free);
+
+					// Put in free list.
+					to_free->next = p->free_extend_struct;
+					p->free_extend_struct = to_free;
 				}
 			}
 		} else if (x->next) {
@@ -198,13 +201,31 @@ static void UwacShmPoolInsertExtend(UwacShmPool *p, size_t offset, size_t size)
 				x->next->size += size;
 			} else {
 				// fail to merge
-				UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+				UwacShmPoolExtend * e;
+				if (p->free_extend_struct) {
+					e = p->free_extend_struct;
+					p->free_extend_struct = e->next;
+					e->offset = offset;
+					e->next = NULL;
+					e->size = size;
+				} else {
+					e = UwacShmPoolExtendCreate(offset, size);
+				}
 				e->next = *i;
 				*i = e;
 			}
 		} else {
 			// fail to merge
-			UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+			UwacShmPoolExtend * e;
+			if (p->free_extend_struct) {
+				e = p->free_extend_struct;
+				p->free_extend_struct = e->next;
+				e->offset = offset;
+				e->next = NULL;
+				e->size = size;
+			} else {
+				e = UwacShmPoolExtendCreate(offset, size);
+			}
 			e->next = *i;
 			*i = e;
 		}
@@ -214,13 +235,31 @@ static void UwacShmPoolInsertExtend(UwacShmPool *p, size_t offset, size_t size)
 			(*i)->size += size;
 		} else {
 			// fail to merge
-			UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+			UwacShmPoolExtend * e;
+			if (p->free_extend_struct) {
+				e = p->free_extend_struct;
+				p->free_extend_struct = e->next;
+				e->offset = offset;
+				e->next = NULL;
+				e->size = size;
+			} else {
+				e = UwacShmPoolExtendCreate(offset, size);
+			}
 			e->next = *i;
 			*i = e;
 		}
 	} else {
 		// fail to merge
-		UwacShmPoolExtend * e = UwacShmPoolExtendCreate(offset, size);
+		UwacShmPoolExtend * e;
+		if (p->free_extend_struct) {
+			e = p->free_extend_struct;
+			p->free_extend_struct = e->next;
+			e->offset = offset;
+			e->next = NULL;
+			e->size = size;
+		} else {
+			e = UwacShmPoolExtendCreate(offset, size);
+		}
 		e->next = *i;
 		*i = e;
 	}
